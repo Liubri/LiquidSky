@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LiquidSky · weather desk</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="grain" aria-hidden="true"></div>
+  <div class="aurora" aria-hidden="true"></div>
+
+  <header class="masthead">
+    <div class="brand">
+      <div class="glyph" aria-hidden="true">
+        <span class="sun"></span>
+        <span class="ray r1"></span><span class="ray r2"></span><span class="ray r3"></span>
+      </div>
+      <div class="brand-text">
+        <h1>LiquidSky</h1>
+        <p class="tag">Kalshi weather desk</p>
+      </div>
+    </div>
+
+    <div class="status-strip">
+      <span id="envBadge" class="env-badge">— </span>
+      <span id="runPill" class="run-pill idle">
+        <span class="dot"></span><span id="runLabel">idle</span>
+      </span>
+      <span id="clock" class="clock">--:--:--</span>
+    </div>
+  </header>
+
+  <section class="stat-row" id="statRow">
+    <article class="stat" data-k="equity">
+      <span class="stat-key">total equity</span>
+      <span class="stat-val" id="equityVal">$—</span>
+      <span class="stat-sub" id="equityDelta">vs. start —</span>
+    </article>
+    <article class="stat" data-k="cash">
+      <span class="stat-key">cash</span>
+      <span class="stat-val" id="cashVal">$—</span>
+      <span class="stat-sub" id="openValSub">deployed $—</span>
+    </article>
+    <article class="stat" data-k="open">
+      <span class="stat-key">open positions</span>
+      <span class="stat-val" id="openCount">—</span>
+      <span class="stat-sub" id="unrealSub">unrealized —</span>
+    </article>
+    <article class="stat" data-k="realized">
+      <span class="stat-key">realized p&amp;l</span>
+      <span class="stat-val" id="realizedVal">$—</span>
+      <span class="stat-sub" id="winSub">win rate —</span>
+    </article>
+  </section>
+
+  <main class="grid">
+    <!-- market map -->
+    <section class="panel map-panel">
+      <div class="panel-head">
+        <h2>market map</h2>
+        <span class="panel-meta" id="mapMeta">—</span>
+      </div>
+      <div class="map-wrap">
+        <svg id="usMap" viewBox="0 0 800 420" preserveAspectRatio="xMidYMid meet"></svg>
+      </div>
+    </section>
+
+    <!-- equity curve -->
+    <section class="panel chart-panel">
+      <div class="panel-head">
+        <h2>equity curve</h2>
+        <span class="panel-meta" id="chartMeta">—</span>
+      </div>
+      <div class="chart-wrap">
+        <svg id="equityChart" viewBox="0 0 800 260" preserveAspectRatio="none"></svg>
+        <div class="chart-empty" id="chartEmpty">no equity snapshots yet — run a cycle</div>
+      </div>
+    </section>
+
+    <!-- command deck -->
+    <section class="panel command-panel">
+      <div class="panel-head"><h2>command deck</h2></div>
+      <div class="commands">
+        <button class="cmd primary" id="btnOnce">
+          <span class="cmd-title">run once</span>
+          <span class="cmd-sub">one scan + monitor cycle</span>
+        </button>
+        <button class="cmd" id="btnStart">
+          <span class="cmd-title">start loop</span>
+          <span class="cmd-sub">continuous, every <em id="intervalLbl">—</em> min</span>
+        </button>
+        <button class="cmd danger" id="btnStop" disabled>
+          <span class="cmd-title">stop loop</span>
+          <span class="cmd-sub">halt the scheduler</span>
+        </button>
+      </div>
+      <dl class="report" id="report">
+        <div><dt>trades opened</dt><dd id="rOpened">—</dd></div>
+        <div><dt>trades closed</dt><dd id="rClosed">—</dd></div>
+        <div><dt>win rate</dt><dd id="rWin">—</dd></div>
+        <div><dt>realized p&amp;l</dt><dd id="rRealized">—</dd></div>
+        <div><dt>peak equity</dt><dd id="rPeak">—</dd></div>
+        <div><dt>max drawdown</dt><dd id="rDraw">—</dd></div>
+      </dl>
+    </section>
+
+    <!-- positions -->
+    <section class="panel positions-panel">
+      <div class="panel-head">
+        <h2>open positions</h2>
+        <span class="panel-meta" id="posMeta">—</span>
+      </div>
+      <div class="city-filter" id="cityFilter">
+        <button class="city-btn active" data-city="all">all</button>
+        <button class="city-btn" data-city="KXHIGHNY">NYC</button>
+        <button class="city-btn" data-city="KXHIGHCHI">CHI</button>
+        <button class="city-btn" data-city="KXHIGHLAX">LAX</button>
+        <button class="city-btn" data-city="KXHIGHMIA">MIA</button>
+        <button class="city-btn" data-city="KXHIGHAUS">AUS</button>
+        <button class="city-btn" data-city="KXHIGHDEN">DEN</button>
+        <button class="city-btn" data-city="KXHIGHPHIL">PHL</button>
+      </div>
+      <div class="table-wrap">
+        <table class="positions">
+          <thead>
+            <tr>
+              <th>market</th><th>side</th><th class="num">qty</th>
+              <th class="num">entry</th><th class="num">last</th><th class="num">stop</th>
+              <th class="num">cost</th><th class="num">value</th><th class="num">p&amp;l</th>
+            </tr>
+          </thead>
+          <tbody id="posBody">
+            <tr class="empty-row"><td colspan="9">no open positions</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- log console -->
+    <section class="panel log-panel">
+      <div class="panel-head">
+        <h2>activity log</h2>
+        <button class="ghost" id="btnClearLog">clear</button>
+      </div>
+      <div class="console" id="console"></div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span>LiquidSky · paper-default · forecasts vs. market edge</span>
+    <span id="lastSync">synced —</span>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

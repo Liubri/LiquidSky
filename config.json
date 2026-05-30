@@ -1,0 +1,19 @@
+{
+  "starting_balance": 1000.0,
+  "max_bet": 50.0,
+  "min_edge": 0.05,
+  "max_entry_cents": 45,
+  "min_volume": 50,
+  "kelly_fraction": 0.25,
+  "forecast_sigma_default": 2.5,
+  "stop_loss_pct": 0.20,
+  "trail_activate_gain": 0.20,
+  "trail_pct": 0.80,
+  "scan_interval_minutes": 60,
+  "skip_today_after_local_hour": 14,
+  "max_open_positions": 20,
+  "slippage_cents": 1,
+  "calibration_min_observations": 30,
+  "cities": [],
+  "confirm_live": false
+}

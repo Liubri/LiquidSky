@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "liquidsky"
+version = "0.1.0"
+description = "Kalshi daily high-temperature trading bot with paper mode"
+requires-python = ">=3.9"
+dependencies = [
+    "requests>=2.31",
+    "cryptography>=42.0",
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "python-dotenv>=1.0",
+    "flask>=3.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+liquidsky = ["web_static/*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
