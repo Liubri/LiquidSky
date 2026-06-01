@@ -15,7 +15,7 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 from scipy.stats import norm
 
@@ -152,7 +152,7 @@ def _ask_cents(market: Dict[str, Any], side: str) -> Optional[int]:
 # ------------------------------------------------------------------- evaluation
 def _evaluate_side(
     market: Dict[str, Any],
-    bucket: Bucket,
+    p_yes: float,
     mu: float,
     sigma: float,
     side: str,
@@ -164,7 +164,6 @@ def _evaluate_side(
         return None
 
     # Model probability that THIS side settles in-the-money.
-    p_yes = bucket_probability(mu, sigma, bucket)
     prob = p_yes if side == "yes" else 1.0 - p_yes
 
     # Pay a little above the quoted ask to be conservative about slippage.
@@ -208,15 +207,27 @@ def evaluate_market(
     sigma: float,
     cfg,
     balance: float,
+    prob_of_bucket: Optional[Callable[[Bucket], float]] = None,
 ) -> Optional[Signal]:
-    """Best positive-edge signal for a market, or None if nothing qualifies."""
+    """Best positive-edge signal for a market, or None if nothing qualifies.
+
+    `prob_of_bucket` lets a strategy supply its own probability model. When it
+    is None we fall back to the Gaussian `Normal(mu, sigma)` CDF, so the legacy
+    `(mu, sigma)` call path is unchanged. `mu`/`sigma` are still recorded on the
+    Signal for display regardless of which probability model is used.
+    """
     bucket = parse_bucket(market)
     if bucket is None:
         return None
 
+    if prob_of_bucket is None:
+        p_yes = bucket_probability(mu, sigma, bucket)
+    else:
+        p_yes = prob_of_bucket(bucket)
+
     candidates = [
-        _evaluate_side(market, bucket, mu, sigma, "yes", cfg, balance),
-        _evaluate_side(market, bucket, mu, sigma, "no", cfg, balance),
+        _evaluate_side(market, p_yes, mu, sigma, "yes", cfg, balance),
+        _evaluate_side(market, p_yes, mu, sigma, "no", cfg, balance),
     ]
     qualified = [s for s in candidates if s is not None]
     if not qualified:

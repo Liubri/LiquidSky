@@ -58,6 +58,13 @@ class Config:
     cities: List[str] = field(default_factory=list)
     confirm_live: bool = False
 
+    # --- strategy comparison ---
+    # Which strategies run as independent paper portfolios (empty = all known).
+    # Each gets its own ledger under data/<env>/<strategy_key>/.
+    strategies: List[str] = field(default_factory=list)
+    # Per-strategy config tweaks, e.g. {"ensemble": {"min_edge": 0.08}}.
+    strategy_overrides: dict = field(default_factory=dict)
+
     # --- environment / credentials (from env vars + CLI) ---
     env: str = "paper"
     api_key_id: Optional[str] = None

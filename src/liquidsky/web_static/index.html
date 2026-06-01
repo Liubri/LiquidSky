@@ -34,6 +34,9 @@
     </div>
   </header>
 
+  <nav class="strategy-bar" id="strategyBar" aria-label="strategy switcher"></nav>
+
+  <div id="dashboardView">
   <section class="stat-row" id="statRow">
     <article class="stat" data-k="equity">
       <span class="stat-key">total equity</span>
@@ -149,6 +152,45 @@
       <div class="console" id="console"></div>
     </section>
   </main>
+  </div><!-- /dashboardView -->
+
+  <!-- compare view (multiple strategies side by side) -->
+  <section id="compareView" class="compare-view" hidden>
+    <div class="cmp-cards" id="cmpCards"></div>
+
+    <section class="panel cmp-chart-panel">
+      <div class="panel-head">
+        <h2>equity · all strategies</h2>
+        <span class="panel-meta" id="cmpChartMeta">—</span>
+      </div>
+      <div class="chart-wrap">
+        <svg id="compareChart" viewBox="0 0 800 280" preserveAspectRatio="none"></svg>
+        <div class="chart-empty" id="cmpChartEmpty">no equity snapshots yet — run a cycle</div>
+      </div>
+      <div class="cmp-legend" id="cmpLegend"></div>
+    </section>
+
+    <section class="panel cmp-table-panel">
+      <div class="panel-head">
+        <h2>scoreboard</h2>
+        <span class="panel-meta">lower Brier = better calibrated</span>
+      </div>
+      <div class="table-wrap">
+        <table class="positions cmp-table">
+          <thead>
+            <tr>
+              <th>strategy</th><th class="num">equity</th><th class="num">return</th>
+              <th class="num">win rate</th><th class="num">closed</th>
+              <th class="num">max dd</th><th class="num">brier</th>
+            </tr>
+          </thead>
+          <tbody id="cmpBody">
+            <tr class="empty-row"><td colspan="7">no data yet</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </section>
 
   <footer class="footer">
     <span>LiquidSky · paper-default · forecasts vs. market edge</span>

@@ -15,23 +15,36 @@ from . import positions as P
 from .cities import City, resolve_cities
 from .config import Config
 from .execution import Executor, build_executor
-from .forecast import build_forecast
 from .kalshi_client import KalshiClient
+from .strategies import GaussianStrategy, Strategy, apply_overrides
 from .strategy import Signal, evaluate_market
 
 log = logging.getLogger("liquidsky")
 
 
 class Bot:
-    def __init__(self, cfg: Config):
+    """One strategy's paper/live portfolio: scans, trades, and reports on its
+    own ledger under ``data/<env>/<strategy_key>/``.
+
+    Multiple Bots (one per strategy) run side-by-side over the same live markets
+    via the `Desk` orchestrator; each keeps a fully independent balance and
+    equity curve so the strategies can be compared head-to-head.
+    """
+
+    def __init__(self, cfg: Config, strategy: Optional[Strategy] = None):
         self.cfg = cfg
+        self.strategy: Strategy = strategy or GaussianStrategy()
+        # Effective config = base config + this strategy's overrides.
+        self.eff_cfg = apply_overrides(
+            cfg, self.strategy, (cfg.strategy_overrides or {}).get(self.strategy.key)
+        )
         self.client = KalshiClient(
             base_url=cfg.base_url,
             api_key_id=cfg.api_key_id,
             private_key_path=cfg.private_key_path,
         )
         self.executor: Executor = build_executor(cfg, self.client)
-        self.data_dir = cfg.data_dir
+        self.data_dir = cfg.data_dir / self.strategy.key
         self.data_dir.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------- helpers
@@ -111,15 +124,14 @@ class Bot:
                     log.info("Skipping %s %s: past %02d:00 local, high likely set",
                              city.name, target, self.cfg.skip_today_after_local_hour)
                     continue
-                forecast = build_forecast(
-                    city, target, default_sigma=self.cfg.forecast_sigma_default
-                )
+                forecast = self.strategy.forecast(city, target, self.eff_cfg)
                 if forecast is None:
-                    log.info("No forecast for %s %s; skipping", city.name, target)
+                    log.info("[%s] No forecast for %s %s; skipping",
+                             self.strategy.key, city.name, target)
                     continue
                 log.info(
-                    "%s %s forecast: mu=%.1fF sigma=%.1fF (n=%d)",
-                    city.name, target, forecast.mu, forecast.sigma, forecast.n_models,
+                    "[%s] %s %s forecast: %s",
+                    self.strategy.key, city.name, target, forecast.label,
                 )
                 for market in bucket_markets:
                     current_prices[market["ticker"]] = (
@@ -134,19 +146,23 @@ class Bot:
 
     def _consider(self, market: dict, forecast, city: City) -> Optional[Signal]:
         ticker = market["ticker"]
+        cfg = self.eff_cfg
         # Never re-enter a market we already have a record for (open or closed).
         if P.load_position(self.data_dir, ticker) is not None:
             return None
-        if len(P.load_open_positions(self.data_dir)) >= self.cfg.max_open_positions:
+        if len(P.load_open_positions(self.data_dir)) >= cfg.max_open_positions:
             return None
 
         balance = self.balance()
-        signal = evaluate_market(market, forecast.mu, forecast.sigma, self.cfg, balance)
+        signal = evaluate_market(
+            market, forecast.mu, forecast.sigma, cfg, balance,
+            prob_of_bucket=forecast.prob_of_bucket,
+        )
         if signal is None:
             return None
         if signal.stake > balance:
-            log.info("Insufficient balance for %s (need %.2f, have %.2f)",
-                     ticker, signal.stake, balance)
+            log.info("[%s] Insufficient balance for %s (need %.2f, have %.2f)",
+                     self.strategy.key, ticker, signal.stake, balance)
             return None
 
         fill = self.executor.buy(signal)
@@ -156,15 +172,17 @@ class Bot:
             side=fill.side,
             count=fill.count,
             entry_price_cents=fill.price_cents,
-            stop_loss_pct=self.cfg.stop_loss_pct,
+            stop_loss_pct=cfg.stop_loss_pct,
             city=city.series_ticker,
             forecast_mu=forecast.mu,
             forecast_sigma=forecast.sigma,
+            strategy=self.strategy.key,
+            entry_prob=signal.prob,
         )
         log.info(
-            "[%s] BUY %s %dx %s @ %dc  edge=%.1f%% EV=%.1fc cost=$%.2f",
-            self.executor.name, fill.side.upper(), fill.count, ticker,
-            fill.price_cents, signal.edge * 100, signal.ev_cents, fill.amount,
+            "[%s/%s] BUY %s %dx %s @ %dc  edge=%.1f%% EV=%.1fc cost=$%.2f",
+            self.strategy.key, self.executor.name, fill.side.upper(), fill.count,
+            ticker, fill.price_cents, signal.edge * 100, signal.ev_cents, fill.amount,
         )
         return signal
 
@@ -198,7 +216,7 @@ class Bot:
             current_prices[ticker] = exit_price
             pos["last_price_cents"] = exit_price  # cached for the dashboard
 
-            P.update_trailing_stop(pos, exit_price, self.cfg)
+            P.update_trailing_stop(pos, exit_price, self.eff_cfg)
             reason = P.should_close(pos, exit_price)
             if reason:
                 fill = self.executor.sell(ticker, pos["side"], pos["count"], exit_price)
@@ -296,6 +314,8 @@ class Bot:
         open_value = round(sum(v["value"] for v in open_views), 2)
         return {
             "env": self.cfg.env,
+            "strategy": self.strategy.key,
+            "strategy_name": self.strategy.name,
             "is_live_trading": self.cfg.is_live_trading,
             "starting_balance": self.cfg.starting_balance,
             "cash": cash,
@@ -304,6 +324,26 @@ class Bot:
             "open_count": len(open_views),
             "positions": open_views,
         }
+
+    @staticmethod
+    def _brier_score(closed: List[dict]) -> Optional[float]:
+        """Mean Brier score over settled positions (lower = better calibrated).
+
+        Only positions that reached resolution carry a meaningful outcome; stop
+        exits are excluded since they never settled. Returns None if there is
+        nothing settled yet.
+        """
+        settled = [p for p in closed
+                   if (p.get("close_reason") or "").startswith("settled")
+                   and "entry_prob" in p]
+        if not settled:
+            return None
+        total = 0.0
+        for p in settled:
+            won = 1.0 if p.get("close_reason") == "settled_win" else 0.0
+            prob = float(p.get("entry_prob") or 0.0)
+            total += (prob - won) ** 2
+        return round(total / len(settled), 4)
 
     def report_data(self) -> dict:
         all_pos = P.load_all_positions(self.data_dir)
@@ -315,6 +355,8 @@ class Bot:
         peak, max_dd = self._equity_stats()
         return {
             "env": self.cfg.env,
+            "strategy": self.strategy.key,
+            "strategy_name": self.strategy.name,
             "trades_opened": len(all_pos),
             "trades_closed": len(closed),
             "wins": len(wins),
@@ -323,6 +365,7 @@ class Bot:
             "cash": self.balance(),
             "peak_equity": peak,
             "max_drawdown_pct": round(max_dd * 100, 1),
+            "brier_score": self._brier_score(closed),
             "closed_positions": [self._position_view(p) for p in closed],
         }
 

@@ -14,8 +14,8 @@ import argparse
 import logging
 import sys
 
-from .bot import Bot
 from .config import VALID_ENVS, load_config
+from .desk import Desk
 
 
 def _setup_logging(verbose: bool) -> None:
@@ -42,17 +42,17 @@ def main(argv=None) -> int:
     _setup_logging(args.verbose)
 
     cfg = load_config(env=args.env)
-    bot = Bot(cfg)
+    desk = Desk(cfg)
 
     if args.command == "status":
-        print(bot.status())
+        print(desk.status_text())
     elif args.command == "report":
-        print(bot.report())
+        print(desk.report_text())
     elif args.command == "once":
-        bot.run_once()
-        print(bot.status())
+        desk.run_once()
+        print(desk.status_text())
     elif args.command == "run":
-        bot.run_forever()
+        desk.run_forever()
     elif args.command == "serve":
         from .web import serve
         url = f"http://{args.host}:{args.port}"

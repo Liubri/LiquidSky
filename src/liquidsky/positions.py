@@ -85,12 +85,15 @@ def open_position(
     city: str = "",
     forecast_mu: float = 0.0,
     forecast_sigma: float = 0.0,
+    strategy: str = "",
+    entry_prob: float = 0.0,
 ) -> Dict[str, Any]:
     """Create and persist a new open position. Returns the position dict."""
     initial_stop = max(1, round(entry_price_cents * (1.0 - stop_loss_pct)))
     pos = {
         "ticker": ticker,
         "city": city,
+        "strategy": strategy,
         "side": side,
         "status": "open",
         "count": count,
@@ -100,6 +103,7 @@ def open_position(
         "high_water_cents": entry_price_cents,
         "forecast_mu": forecast_mu,
         "forecast_sigma": forecast_sigma,
+        "entry_prob": entry_prob,
         "opened_at": _now_iso(),
         "exit_price_cents": None,
         "returned": None,

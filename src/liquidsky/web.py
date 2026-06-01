@@ -19,8 +19,8 @@ from typing import Deque, Dict, List
 
 from flask import Flask, jsonify, request, send_from_directory
 
-from .bot import Bot
 from .config import Config
+from .desk import Desk
 
 STATIC_DIR = Path(__file__).resolve().parent / "web_static"
 
@@ -51,7 +51,7 @@ class Runner:
 
     def __init__(self, cfg: Config):
         self.cfg = cfg
-        self.bot = Bot(cfg)
+        self.desk = Desk(cfg)
         self._lock = threading.Lock()      # serializes cycles
         self._busy = False                 # a single "once" cycle is running
         self._loop = False                 # continuous loop active
@@ -71,7 +71,7 @@ class Runner:
         with self._lock:
             self._busy = True
             try:
-                self.bot.run_once()
+                self.desk.run_once()
             except Exception:
                 self.log.exception("Cycle failed")
             finally:
@@ -130,17 +130,29 @@ def create_app(cfg: Config) -> Flask:
         return send_from_directory(STATIC_DIR, filename)
 
     # -------------------------------------------------------- read APIs
+    @app.get("/api/strategies")
+    def api_strategies():
+        return jsonify({"strategies": runner.desk.list_strategies(),
+                        "default": runner.desk.default_key})
+
     @app.get("/api/status")
     def api_status():
-        return jsonify({**runner.bot.status_data(), "runner": runner.state})
+        key = request.args.get("strategy")
+        return jsonify({**runner.desk.status_data(key), "runner": runner.state})
 
     @app.get("/api/report")
     def api_report():
-        return jsonify(runner.bot.report_data())
+        key = request.args.get("strategy")
+        return jsonify(runner.desk.report_data(key))
 
     @app.get("/api/equity")
     def api_equity():
-        return jsonify({"points": runner.bot.equity_series()})
+        key = request.args.get("strategy")
+        return jsonify({"points": runner.desk.equity_series(key)})
+
+    @app.get("/api/compare")
+    def api_compare():
+        return jsonify(runner.desk.compare())
 
     @app.get("/api/logs")
     def api_logs():

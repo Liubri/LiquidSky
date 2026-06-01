@@ -3,10 +3,13 @@
   "use strict";
 
   const $ = (id) => document.getElementById(id);
+  const qs = (s) => (s ? `?strategy=${encodeURIComponent(s)}` : "");
   const api = {
-    status: () => fetch("/api/status").then((r) => r.json()),
-    report: () => fetch("/api/report").then((r) => r.json()),
-    equity: () => fetch("/api/equity").then((r) => r.json()),
+    strategies: () => fetch("/api/strategies").then((r) => r.json()),
+    status: (s) => fetch(`/api/status${qs(s)}`).then((r) => r.json()),
+    report: (s) => fetch(`/api/report${qs(s)}`).then((r) => r.json()),
+    equity: (s) => fetch(`/api/equity${qs(s)}`).then((r) => r.json()),
+    compare: () => fetch("/api/compare").then((r) => r.json()),
     logs: (after) => fetch(`/api/logs?after=${after}`).then((r) => r.json()),
     post: (path) => fetch(path, { method: "POST" }).then((r) => r.json().then((j) => ({ ok: r.ok, j }))),
   };
@@ -15,6 +18,60 @@
   let startingBalance = null;
   let cityFilter = "all";
   let lastPositions = [];
+
+  // Strategy switching: activeView is "compare" or a strategy key.
+  const STRAT_COLORS = ["#67d6ff", "#ffae5c", "#5ef2b0", "#c9a3ff", "#ff6b81"];
+  let strategies = [];          // [{key, name, blurb}]
+  let stratColor = {};          // key -> css color
+  let activeView = "compare";   // current view: strategy key or "compare"
+  let lastCompareSig = null;    // skip re-render when compare data is unchanged
+
+  function isCompare() { return activeView === "compare"; }
+  function currentStrategy() { return isCompare() ? null : activeView; }
+
+  // ---- strategy bar + view router ---------------------------------------
+  async function initStrategies() {
+    let data;
+    try { data = await api.strategies(); } catch { return; }
+    strategies = data.strategies || [];
+    strategies.forEach((s, i) => { stratColor[s.key] = STRAT_COLORS[i % STRAT_COLORS.length]; });
+    activeView = strategies.length > 1 ? "compare" : (data.default || strategies[0]?.key);
+    renderStrategyBar();
+    applyView();
+  }
+
+  function renderStrategyBar() {
+    const bar = $("strategyBar");
+    let html = "";
+    for (const s of strategies) {
+      const c = stratColor[s.key];
+      html += `<button class="strat-tab" data-view="${s.key}" style="--accent:${c}">
+        <span class="st-name"><span class="st-dot" style="background:${c}"></span>${s.name}</span>
+        <span class="st-sub">${s.blurb}</span>
+      </button>`;
+    }
+    if (strategies.length > 1) {
+      html += `<button class="strat-tab compare-tab" data-view="compare" style="--accent:var(--live)">
+        <span class="st-name">⊞ compare</span>
+        <span class="st-sub">side by side</span>
+      </button>`;
+    }
+    bar.innerHTML = html;
+    bar.querySelectorAll(".strat-tab").forEach((el) => {
+      el.addEventListener("click", () => { activeView = el.dataset.view; applyView(); });
+    });
+  }
+
+  function applyView() {
+    document.querySelectorAll(".strat-tab").forEach((el) =>
+      el.classList.toggle("active", el.dataset.view === activeView));
+    const compare = isCompare();
+    $("dashboardView").hidden = compare;
+    $("compareView").hidden = !compare;
+    // Refresh immediately on switch so the view isn't stale until next poll.
+    if (compare) refreshCompare();
+    else { refreshStatus(); refreshReport(); refreshEquity(); }
+  }
 
   const CITIES = {
     "KXHIGHNY":   { name: "New York",     abbr: "NYC", lat: 40.779, lon: -73.969 },
@@ -153,8 +210,10 @@
 
   // ---- status + stat cards ----------------------------------------------
   async function refreshStatus() {
+    // Always runs (even in compare view) to keep the masthead env/runner live;
+    // the strategy-specific panels below are hidden in compare and skipped.
     let s;
-    try { s = await api.status(); } catch { return; }
+    try { s = await api.status(currentStrategy()); } catch { return; }
     startingBalance = s.starting_balance;
 
     // env badge
@@ -175,6 +234,9 @@
     $("btnOnce").disabled = run.busy || run.looping;
     $("btnStart").disabled = run.looping || run.busy;
     $("btnStop").disabled = !run.looping;
+
+    // The panels below live in #dashboardView (hidden in compare view).
+    if (isCompare()) { $("lastSync").textContent = "synced " + new Date().toLocaleTimeString(); return; }
 
     // stat cards
     setText($("equityVal"), usd(s.equity));
@@ -232,8 +294,9 @@
 
   // ---- report ------------------------------------------------------------
   async function refreshReport() {
+    if (isCompare()) return;
     let r;
-    try { r = await api.report(); } catch { return; }
+    try { r = await api.report(currentStrategy()); } catch { return; }
     $("rOpened").textContent = r.trades_opened;
     $("rClosed").textContent = r.trades_closed;
     $("rWin").textContent = `${r.win_rate}% (${r.wins}/${r.trades_closed})`;
@@ -248,10 +311,22 @@
     $("winSub").textContent = `win rate ${r.win_rate}%`;
   }
 
+  // Size the viewBox to the SVG's real pixel box so 1 unit == 1px. Without
+  // this the fixed 800-wide viewBox is stretched to the container width and the
+  // axis labels render horizontally distorted. Falls back to a sane default
+  // when the element isn't laid out yet (e.g. hidden view).
+  function fitViewBox(svg, fallbackW, fallbackH) {
+    const W = Math.round(svg.clientWidth) || fallbackW;
+    const H = Math.round(svg.clientHeight) || fallbackH;
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    return { W, H };
+  }
+
   // ---- equity curve (hand-drawn SVG) ------------------------------------
   async function refreshEquity() {
+    if (isCompare()) return;
     let data;
-    try { data = await api.equity(); } catch { return; }
+    try { data = await api.equity(currentStrategy()); } catch { return; }
     const pts = (data.points || []).map((p) => p.equity);
     const svg = $("equityChart");
     const wrap = svg.closest(".chart-wrap");
@@ -259,7 +334,8 @@
     if (pts.length < 2) { wrap.classList.add("empty"); svg.innerHTML = ""; return; }
     wrap.classList.remove("empty");
 
-    const W = 800, H = 260, pad = { l: 8, r: 56, t: 16, b: 22 };
+    const { W, H } = fitViewBox(svg, 800, 260);
+    const pad = { l: 8, r: 56, t: 16, b: 22 };
     const iw = W - pad.l - pad.r, ih = H - pad.t - pad.b;
     let lo = Math.min(...pts), hi = Math.max(...pts);
     if (startingBalance != null) { lo = Math.min(lo, startingBalance); hi = Math.max(hi, startingBalance); }
@@ -306,6 +382,128 @@
     $("chartMeta").textContent = `${pts.length} snapshots · ${usd(lastV)}`;
   }
 
+  // ---- compare view ------------------------------------------------------
+  async function refreshCompare() {
+    if (!isCompare()) return;
+    let data;
+    try { data = await api.compare(); } catch { return; }
+    // Re-rendering identical innerHTML every poll causes a visible flash/repaint;
+    // only rebuild the DOM when the payload actually changed.
+    const sig = JSON.stringify(data);
+    if (sig === lastCompareSig) return;
+    lastCompareSig = sig;
+    const rows = data.strategies || [];
+    const leader = rows.reduce((best, r) => (!best || r.equity > best.equity ? r : best), null);
+
+    // strategy cards
+    $("cmpCards").innerHTML = rows.map((r) => {
+      const c = stratColor[r.key] || "var(--cool)";
+      const isLeader = leader && r.key === leader.key && rows.length > 1;
+      const brier = r.brier_score == null ? "—" : r.brier_score.toFixed(3);
+      return `<article class="cmp-card${isLeader ? " leader" : ""}" style="--accent:${c}">
+        <div class="cc-head">
+          <span class="cc-dot" style="background:${c}"></span>
+          <span class="cc-name">${r.name}</span>
+          ${isLeader ? `<span class="cc-crown">▲ leading</span>` : ""}
+        </div>
+        <div class="cc-equity">${usd(r.equity)}</div>
+        <div class="cc-ret ${cls(r.return_pct)}">${r.return_pct > 0 ? "+" : ""}${r.return_pct}% vs. start</div>
+        <div class="cc-grid">
+          <div><dt>win rate</dt><dd>${r.win_rate}%</dd></div>
+          <div><dt>closed</dt><dd>${r.trades_closed}</dd></div>
+          <div><dt>open</dt><dd>${r.open_count}</dd></div>
+          <div><dt>max dd</dt><dd>${r.max_drawdown_pct}%</dd></div>
+          <div><dt>realized</dt><dd class="${cls(r.realized_pnl)}">${usd(r.realized_pnl)}</dd></div>
+          <div><dt>brier</dt><dd>${brier}</dd></div>
+        </div>
+        <div class="cc-blurb">${r.blurb}</div>
+      </article>`;
+    }).join("");
+
+    // scoreboard table
+    const body = $("cmpBody");
+    if (!rows.length) {
+      body.innerHTML = `<tr class="empty-row"><td colspan="7">no data yet</td></tr>`;
+    } else {
+      body.innerHTML = rows
+        .slice().sort((a, b) => b.equity - a.equity)
+        .map((r) => {
+          const c = stratColor[r.key] || "var(--cool)";
+          const isLeader = leader && r.key === leader.key && rows.length > 1;
+          const brier = r.brier_score == null ? "—" : r.brier_score.toFixed(3);
+          return `<tr class="${isLeader ? "lead-row" : ""}" style="--accent:${c}">
+            <td class="market"><span class="st-dot" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${c};margin-right:7px"></span>${r.name}</td>
+            <td class="num">${usd(r.equity)}</td>
+            <td class="num ${cls(r.return_pct)}">${r.return_pct > 0 ? "+" : ""}${r.return_pct}%</td>
+            <td class="num">${r.win_rate}%</td>
+            <td class="num">${r.trades_closed}</td>
+            <td class="num">${r.max_drawdown_pct}%</td>
+            <td class="num">${brier}</td>
+          </tr>`;
+        }).join("");
+    }
+
+    renderCompareChart(data);
+  }
+
+  function renderCompareChart(data) {
+    const svg = $("compareChart");
+    const wrap = svg.closest(".chart-wrap");
+    const series = data.equity || {};
+    const keys = Object.keys(series).filter((k) => (series[k] || []).length >= 2);
+
+    if (!keys.length) { wrap.classList.add("empty"); svg.innerHTML = ""; $("cmpLegend").innerHTML = ""; return; }
+    wrap.classList.remove("empty");
+
+    const { W, H } = fitViewBox(svg, 800, 280);
+    const pad = { l: 8, r: 56, t: 16, b: 22 };
+    const iw = W - pad.l - pad.r, ih = H - pad.t - pad.b;
+    const start = data.starting_balance;
+
+    let lo = Infinity, hi = -Infinity, maxLen = 0;
+    for (const k of keys) {
+      for (const p of series[k]) { lo = Math.min(lo, p.equity); hi = Math.max(hi, p.equity); }
+      maxLen = Math.max(maxLen, series[k].length);
+    }
+    if (start != null) { lo = Math.min(lo, start); hi = Math.max(hi, start); }
+    if (hi === lo) { hi += 1; lo -= 1; }
+    const padv = (hi - lo) * 0.12; lo -= padv; hi += padv;
+
+    const x = (i, n) => pad.l + (n <= 1 ? 0 : (i / (n - 1)) * iw);
+    const y = (v) => pad.t + (1 - (v - lo) / (hi - lo)) * ih;
+
+    let grid = "";
+    const ticks = 4;
+    for (let i = 0; i <= ticks; i++) {
+      const v = lo + ((hi - lo) * i) / ticks;
+      const gy = y(v).toFixed(1);
+      grid += `<line class="eq-grid" x1="${pad.l}" y1="${gy}" x2="${pad.l + iw}" y2="${gy}"/>`;
+      grid += `<text class="eq-label" x="${pad.l + iw + 6}" y="${(+gy + 4).toFixed(1)}">$${v.toFixed(0)}</text>`;
+    }
+    let base = "";
+    if (start != null && start >= lo && start <= hi) {
+      const by = y(start).toFixed(1);
+      base = `<line class="eq-base" x1="${pad.l}" y1="${by}" x2="${pad.l + iw}" y2="${by}"/>`;
+    }
+
+    let lines = "";
+    for (const k of keys) {
+      const pts = series[k].map((p) => p.equity);
+      const c = stratColor[k] || "var(--cool)";
+      const path = pts.map((v, i) => `${i ? "L" : "M"}${x(i, pts.length).toFixed(1)} ${y(v).toFixed(1)}`).join(" ");
+      const lx = x(pts.length - 1, pts.length).toFixed(1), ly = y(pts[pts.length - 1]).toFixed(1);
+      lines += `<path class="eq-line multi" style="stroke:${c}" d="${path}"/>
+        <circle cx="${lx}" cy="${ly}" r="3.2" style="fill:${c}"/>`;
+    }
+
+    svg.innerHTML = `${grid}${base}${lines}`;
+    $("cmpChartMeta").textContent = `${maxLen} snapshots`;
+    $("cmpLegend").innerHTML = keys.map((k) => {
+      const r = (data.strategies || []).find((s) => s.key === k);
+      return `<span class="lg"><span class="sw" style="background:${stratColor[k]}"></span>${r ? r.name : k}</span>`;
+    }).join("");
+  }
+
   // ---- log console -------------------------------------------------------
   const consoleEl = $("console");
   consoleEl.innerHTML = '<div class="placeholder">awaiting activity…</div>';
@@ -339,6 +537,7 @@
       $(id).disabled = true;
       try { await api.post(path); } catch {}
       await refreshStatus();
+      refreshCompare();
       // pull logs quickly after a command kicks off
       setTimeout(refreshLogs, 400);
     });
@@ -354,9 +553,23 @@
   function tick() { $("clock").textContent = new Date().toLocaleTimeString(); }
   setInterval(tick, 1000); tick();
 
+  // Refit charts to the new pixel size on resize (the compare poll otherwise
+  // skips re-rendering when the data hasn't changed).
+  let resizeTimer = null;
+  window.addEventListener("resize", () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      lastCompareSig = null;
+      if (isCompare()) refreshCompare();
+      else refreshEquity();
+    }, 150);
+  });
+
   function poll(fn, ms) { fn(); setInterval(fn, ms); }
+  initStrategies();
   poll(refreshStatus, 3000);
   poll(refreshReport, 6000);
   poll(refreshEquity, 6000);
+  poll(refreshCompare, 3000);
   poll(refreshLogs, 1500);
 })();

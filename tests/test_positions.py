@@ -23,6 +23,16 @@ def test_balance_reconstructed_from_trade_files(data_dir):
     )
 
 
+def test_open_position_records_strategy_and_entry_prob(data_dir):
+    pos = P.open_position(data_dir, "T", "yes", count=10, entry_price_cents=30,
+                          stop_loss_pct=0.2, strategy="ensemble", entry_prob=0.72)
+    assert pos["strategy"] == "ensemble"
+    assert pos["entry_prob"] == 0.72
+    # Persisted to disk, not just returned.
+    reloaded = P.load_position(data_dir, "T")
+    assert reloaded["strategy"] == "ensemble" and reloaded["entry_prob"] == 0.72
+
+
 def test_balance_is_idempotent_no_drift(data_dir):
     """Recomputing many times never drifts."""
     start = 500.0
